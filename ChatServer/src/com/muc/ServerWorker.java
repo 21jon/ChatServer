@@ -1,13 +1,20 @@
 package com.muc;
 
+import org.apache.commons.lang3.StringUtils;
+
 import java.io.*;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 public class ServerWorker extends Thread{
-    private static Socket clientSocket;
+    private final Socket clientSocket;
+    private final Server server;
+    private String login = null;
+    private OutputStream outputStream;
 
-    public ServerWorker(Socket clientSocket) {
+    public ServerWorker(Server server, Socket clientSocket) {
+        this.server = server;
         this.clientSocket = clientSocket;
     }
 
@@ -22,20 +29,103 @@ public class ServerWorker extends Thread{
         }
     }
 
-    private static void handleClientSocket() throws IOException, InterruptedException {
+    private void handleClientSocket() throws IOException, InterruptedException {
         InputStream inputStream = clientSocket.getInputStream();
-        OutputStream outputStream = clientSocket.getOutputStream();
+        this.outputStream = clientSocket.getOutputStream();
 
         BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
         String line;
         while ( (line = reader.readLine()) != null ){
-            if("quit".equalsIgnoreCase(line)){
-                break;
+            String[] tokens = StringUtils.split(line);
+            if(tokens != null && tokens.length > 0){
+                String cmd = tokens[0];
+                if("quit".equalsIgnoreCase(cmd) || "logoff".equalsIgnoreCase(cmd)){
+                    handleLogoff();
+                    break;
+                } else if("login".equalsIgnoreCase(cmd)){
+                    handleLogin(outputStream, tokens);
+                } else {
+                    String msg= "unknown " + cmd + "\n";
+                    outputStream.write(msg.getBytes(StandardCharsets.UTF_8));
+                }
             }
-            String msg = "You typed: " + line + "\n";
-            outputStream.write(msg.getBytes(StandardCharsets.UTF_8));
         }
 
         clientSocket.close();
+    }
+
+    private void handleLogoff() {
+        List<ServerWorker> workerList = server.getWorkerList();
+        // send other online users current user's status
+        String onlineMsg = "offline " + login + "\n";
+        for (ServerWorker worker : workerList){
+            if (!login.equals(worker.getLogin())) {
+                worker.send(onlineMsg);
+            }
+        }
+
+        try {
+            clientSocket.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public String getLogin() {
+        return login;
+    }
+
+    private void handleLogin(OutputStream outputStream, String[] tokens) {
+        if(tokens.length == 3){
+            String login = tokens[1];
+            String password = tokens[2];
+
+            if (login.equals("guest") && password.equals("guest") || login.equals("jim") && password.equals("jim")){
+                String msg = "ok login\n";
+                try {
+                    outputStream.write(msg.getBytes(StandardCharsets.UTF_8));
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                this.login = login;
+                System.out.println("User logged in succsesfully: " + login);
+
+                List<ServerWorker> workerList = server.getWorkerList();
+
+                // send current user all other online logins
+                for (ServerWorker worker : workerList){
+                    if(worker.getLogin() != null){
+                        if (!login.equals(worker.getLogin())) {
+                            String msg2 = "online " + worker.getLogin() + "\n";
+                            send(msg2);
+                        }
+                    }
+                }
+                // send other online users current user's status
+                String onlineMsg = "online " + login + "\n";
+                for (ServerWorker worker : workerList){
+                    if (!login.equals(worker.getLogin())) {
+                        worker.send(onlineMsg);
+                    }
+                }
+            } else {
+                String msg = "error login\n";
+                try {
+                    outputStream.write(msg.getBytes(StandardCharsets.UTF_8));
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+
+    private void send(String msg) {
+        if (login != null){
+            try {
+                outputStream.write(msg.getBytes(StandardCharsets.UTF_8));
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
     }
 }
